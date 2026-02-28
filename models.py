@@ -69,3 +69,6 @@ class MarketReport:
     stock: Optional[StockReport] = None
     fund_flow: Optional[FundFlowReport] = None
     news: Optional[NewsReport] = None
+    watchlist: Optional[pd.DataFrame] = None
+    watch_sectors: Optional[list] = None  # [{name, code, overview, stocks}]
+    reasons: Optional[dict] = None  # {"stock:300274": "原因", "sector:有色金属": "原因"}

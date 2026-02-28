@@ -21,6 +21,9 @@ _requests.Session = _NoProxySession
 from models import MarketReport, NewsReport
 from data.market_data import fetch_sector_report, fetch_stock_report
 from data.fund_flow import fetch_fund_flow
+from data.watchlist import fetch_watchlist
+from data.watch_sector import fetch_watch_sectors
+from data.reasons import analyze_reasons
 from news.collector import NewsCollector
 from news.matcher import match_news_to_sectors, extract_sector_names
 from report import terminal, markdown
@@ -62,7 +65,21 @@ async def run_once(skip_news: bool = False) -> None:
     except Exception as e:
         print(f"[警告] 资金流向获取失败: {e}")
 
-    # 4. 新闻采集（容错，可跳过）
+    # 4. 自选股（容错）
+    try:
+        report.watchlist = fetch_watchlist()
+        if report.watchlist is not None and not report.watchlist.empty:
+            print(f"[自选] 获取到 {len(report.watchlist)} 只自选股行情")
+    except Exception as e:
+        print(f"[警告] 自选股数据获取失败: {e}")
+
+    # 4.5 关注板块（容错）
+    try:
+        report.watch_sectors = fetch_watch_sectors()
+    except Exception as e:
+        print(f"[警告] 关注板块数据获取失败: {e}")
+
+    # 5. 新闻采集（容错，可跳过）
     if not skip_news:
         try:
             async with NewsCollector() as collector:
@@ -85,7 +102,13 @@ async def run_once(skip_news: bool = False) -> None:
     else:
         print("[跳过] 新闻采集 (--no-news)")
 
-    # 5. 输出报告
+    # 6. 涨跌原因分析（容错）
+    try:
+        report.reasons = analyze_reasons(report)
+    except Exception as e:
+        print(f"[警告] 原因分析失败: {e}")
+
+    # 7. 输出报告
     terminal.render(report)
     filepath = markdown.save(report)
     print(f"\n[保存] Markdown 报告: {filepath}")
@@ -227,9 +250,24 @@ def _build_demo_report() -> MarketReport:
     )
 
 
+def start_web(port: int = 8088) -> None:
+    """在后台线程启动 Web 前端"""
+    import threading
+    from web import app
+
+    def _run():
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    print(f"  Web 前端: http://localhost:{port}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="A股每日投资顾问")
     parser.add_argument("--schedule", action="store_true", help="启动定时调度 (11:35, 15:05 周一至周五)")
+    parser.add_argument("--web", action="store_true", help="启动 Web 前端 (默认端口 8088)")
+    parser.add_argument("--port", type=int, default=8088, help="Web 前端端口 (默认 8088)")
     parser.add_argument("--no-news", action="store_true", help="跳过新闻采集 (快速模式)")
     parser.add_argument("--demo", action="store_true", help="使用模拟数据验证报告渲染")
     args = parser.parse_args()
@@ -240,7 +278,14 @@ def main():
         filepath = markdown.save(report)
         print(f"\n[保存] Markdown 报告: {filepath}")
     elif args.schedule:
+        if args.web:
+            start_web(args.port)
         start_scheduler()
+    elif args.web:
+        # 单独启动 Web 前端（不做定时调度）
+        from web import app
+        print(f"A股投资顾问 Web 前端: http://localhost:{args.port}")
+        app.run(host="0.0.0.0", port=args.port, debug=False)
     else:
         asyncio.run(run_once(skip_news=args.no_news))
 
